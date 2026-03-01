@@ -1,0 +1,8 @@
+alpaca-trade-api>=3.0.0
+yfinance>=0.2.36
+pandas>=2.0.0
+numpy>=1.24.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+lxml>=4.9.0         # for pd.read_html (S&P 500 Wikipedia scrape)
+html5lib>=1.1       # fallback HTML parser for pd.read_html
