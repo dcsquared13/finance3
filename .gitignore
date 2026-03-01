@@ -1,0 +1,18 @@
+# Environment / secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Data files (portfolio state and trade log — keep locally, not in git)
+data/portfolio.json
+data/trade_log.csv
+
+# OS
+.DS_Store
+Thumbs.db
