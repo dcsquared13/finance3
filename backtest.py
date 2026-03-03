@@ -14,6 +14,13 @@ HOW IT WORKS
 6. Record the evolving weights and portfolio equity curve.
 7. Print a summary and (optionally) plot the learning curve.
 
+Sentiment note
+--------------
+Historical news data is not available via yfinance, so the 'sentiment' feature
+is set to 0.5 (neutral) for all historical picks.  The learner will start
+weighting sentiment more accurately once live trading begins and real sentiment
+values flow in via trading_agent_ml.py.
+
 Usage:
     python backtest.py                        # default: 2 years, hold=5 days
     python backtest.py --years 3 --hold 10   # longer backtest, 10-day holds
@@ -60,9 +67,12 @@ UNIVERSE = [
 
 def compute_features(prices: pd.DataFrame, symbol: str, today_idx: int) -> dict | None:
     """
-    Compute the four normalised indicator scores for `symbol` as of `today_idx`.
+    Compute the five normalised indicator scores for `symbol` as of `today_idx`.
     Returns None if there is insufficient history.
     All features are in [0, 1].
+
+    'sentiment' is set to 0.5 (neutral) because historical news is not available.
+    The learner will calibrate the sentiment weight once live data flows in.
     """
     try:
         col = (symbol, 'Close') if isinstance(prices.columns, pd.MultiIndex) else symbol
@@ -77,27 +87,25 @@ def compute_features(prices: pd.DataFrame, symbol: str, today_idx: int) -> dict 
             return None
 
         # --- RSI (14-day) ---
-        delta = hist.diff().dropna()
-        gains = delta.clip(lower=0)
-        losses = (-delta).clip(lower=0)
+        delta    = hist.diff().dropna()
+        gains    = delta.clip(lower=0)
+        losses   = (-delta).clip(lower=0)
         avg_gain = gains.rolling(14).mean().iloc[-1]
         avg_loss = losses.rolling(14).mean().iloc[-1]
-        if avg_loss == 0:
-            rsi = 100.0
-        else:
-            rsi = 100 - (100 / (1 + avg_gain / avg_loss))
+        rsi      = 100.0 if avg_loss == 0 else 100 - (100 / (1 + avg_gain / avg_loss))
         # Score: oversold (RSI<30) → 1.0, overbought (RSI>70) → 0.0
         rsi_score = float(np.clip((70 - rsi) / 40, 0.0, 1.0))
 
         # --- MACD (12/26/9) ---
-        ema12 = hist.ewm(span=12, adjust=False).mean()
-        ema26 = hist.ewm(span=26, adjust=False).mean()
-        macd_line = ema12 - ema26
+        ema12       = hist.ewm(span=12, adjust=False).mean()
+        ema26       = hist.ewm(span=26, adjust=False).mean()
+        macd_line   = ema12 - ema26
         signal_line = macd_line.ewm(span=9, adjust=False).mean()
-        histogram = macd_line - signal_line
-        # Bullish crossover + rising histogram → score near 1.0
-        macd_cross = 1.0 if (macd_line.iloc[-1] > signal_line.iloc[-1]) else 0.0
-        hist_rising = 1.0 if (len(histogram) >= 2 and histogram.iloc[-1] > histogram.iloc[-2]) else 0.0
+        histogram   = macd_line - signal_line
+        macd_cross  = 1.0 if (macd_line.iloc[-1] > signal_line.iloc[-1]) else 0.0
+        hist_rising = 1.0 if (
+            len(histogram) >= 2 and histogram.iloc[-1] > histogram.iloc[-2]
+        ) else 0.0
         macd_score = 0.6 * macd_cross + 0.4 * hist_rising
 
         # --- 20-day momentum ---
@@ -105,17 +113,18 @@ def compute_features(prices: pd.DataFrame, symbol: str, today_idx: int) -> dict 
             momentum_pct = (hist.iloc[-1] - hist.iloc[-21]) / hist.iloc[-21]
         else:
             momentum_pct = 0.0
-        # Normalise to [0,1] with ±20% = extremes
         momentum_score = float(np.clip((momentum_pct + 0.20) / 0.40, 0.0, 1.0))
 
         # --- Volume breakout ---
-        # yfinance multi-ticker: try (symbol, Volume) or symbol_Volume
         try:
-            vcol = (symbol, 'Volume') if isinstance(prices.columns, pd.MultiIndex) else symbol + '_Volume'
+            vcol = (
+                (symbol, 'Volume')
+                if isinstance(prices.columns, pd.MultiIndex)
+                else symbol + '_Volume'
+            )
             vol = prices[vcol].dropna().iloc[:today_idx + 1]
             if len(vol) >= 21:
-                vol_ratio = vol.iloc[-1] / vol.rolling(20).mean().iloc[-1]
-                # Breakout above 1.5× average + positive momentum → high score
+                vol_ratio    = vol.iloc[-1] / vol.rolling(20).mean().iloc[-1]
                 volume_score = float(np.clip((vol_ratio - 0.5) / 2.0, 0.0, 1.0))
                 if momentum_pct < 0:
                     volume_score *= 0.3   # penalise high volume on down days
@@ -125,13 +134,14 @@ def compute_features(prices: pd.DataFrame, symbol: str, today_idx: int) -> dict 
             volume_score = 0.5
 
         return {
-            'rsi':      rsi_score,
-            'macd':     macd_score,
-            'momentum': momentum_score,
-            'volume':   volume_score,
+            'rsi':       rsi_score,
+            'macd':      macd_score,
+            'momentum':  momentum_score,
+            'volume':    volume_score,
+            'sentiment': 0.5,   # neutral — no historical news available
         }
-    except Exception as e:
-        log.debug(f"Feature error {symbol}: {e}")
+    except Exception as exc:
+        log.debug(f"Feature error {symbol}: {exc}")
         return None
 
 
@@ -139,9 +149,14 @@ def compute_features(prices: pd.DataFrame, symbol: str, today_idx: int) -> dict 
 # Main backtest loop
 # ---------------------------------------------------------------------------
 
-def run_backtest(years: int = 2, hold_period: int = 5, top_k: int = 5,
-                 learning_rate: float = 0.01, plot: bool = False, reset: bool = False):
-
+def run_backtest(
+    years: int = 2,
+    hold_period: int = 5,
+    top_k: int = 5,
+    learning_rate: float = 0.01,
+    plot: bool = False,
+    reset: bool = False,
+):
     if reset and os.path.exists(WEIGHTS_PATH):
         os.remove(WEIGHTS_PATH)
         log.info("Cleared learned_weights.json — starting from defaults")
@@ -150,9 +165,12 @@ def run_backtest(years: int = 2, hold_period: int = 5, top_k: int = 5,
     log.info(f"Starting weights: {learner.weights}")
 
     # --- Fetch data ---
-    end_date = datetime.today()
+    end_date   = datetime.today()
     start_date = end_date - timedelta(days=years * 365 + 60)   # extra buffer for indicators
-    log.info(f"Fetching {len(UNIVERSE)} tickers from {start_date.date()} to {end_date.date()}...")
+    log.info(
+        f"Fetching {len(UNIVERSE)} tickers from "
+        f"{start_date.date()} to {end_date.date()}..."
+    )
 
     raw = yf.download(
         UNIVERSE,
@@ -163,28 +181,26 @@ def run_backtest(years: int = 2, hold_period: int = 5, top_k: int = 5,
     )
     log.info(f"Downloaded price data: {raw.shape}")
 
-    # Build a simple close-price matrix (symbols × dates)
     if isinstance(raw.columns, pd.MultiIndex):
         close_matrix = raw['Close']
     else:
         close_matrix = raw[['Close']]
 
     close_matrix = close_matrix.dropna(how='all')
-    dates = close_matrix.index.tolist()
+    dates  = close_matrix.index.tolist()
     n_days = len(dates)
 
     log.info(f"Trading days available: {n_days}")
 
     # --- State ---
     # pending_picks[settle_idx] = list of {symbol, features, entry_price}
-    pending_picks = defaultdict(list)
-
-    equity_curve = []           # (date, portfolio_value) — simplified, equal-weight
-    weight_history = []         # (date, weights_dict)
-    trade_outcomes = []         # (symbol, date_bought, return_pct, error)
+    pending_picks  = defaultdict(list)
+    equity_curve   = []   # (date, portfolio_value)
+    weight_history = []   # (date, weights_dict)
+    trade_outcomes = []   # (symbol, date_bought, return_pct, error)
 
     portfolio_value = 10_000.0
-    update_count = 0
+    update_count    = 0
 
     # Skip first 60 days (need history for indicators)
     warmup = 60
@@ -195,15 +211,15 @@ def run_backtest(years: int = 2, hold_period: int = 5, top_k: int = 5,
         # 1. Resolve any picks that matured today
         if i in pending_picks:
             for pick in pending_picks[i]:
-                symbol = pick['symbol']
+                symbol      = pick['symbol']
                 entry_price = pick['entry_price']
                 try:
-                    exit_price = float(close_matrix[symbol].iloc[i])
+                    exit_price    = float(close_matrix[symbol].iloc[i])
                     actual_return = (exit_price - entry_price) / entry_price
                 except Exception:
                     actual_return = 0.0
 
-                result = learner.update(pick['features'], actual_return)
+                result       = learner.update(pick['features'], actual_return)
                 update_count += 1
 
                 trade_outcomes.append({
@@ -215,19 +231,19 @@ def run_backtest(years: int = 2, hold_period: int = 5, top_k: int = 5,
                 })
 
                 # Simple P&L tracking
-                position_size = portfolio_value / top_k
+                position_size    = portfolio_value / top_k
                 portfolio_value += position_size * actual_return
 
         # 2. Score today's universe and pick top-K
-        scores = {}
+        scores         = {}
         features_cache = {}
         for symbol in UNIVERSE:
             try:
                 feats = compute_features(raw, symbol, i)
                 if feats is None:
                     continue
-                score = learner.score(feats)
-                scores[symbol] = score
+                score            = learner.score(feats)
+                scores[symbol]   = score
                 features_cache[symbol] = feats
             except Exception:
                 continue
@@ -235,7 +251,7 @@ def run_backtest(years: int = 2, hold_period: int = 5, top_k: int = 5,
         if not scores:
             continue
 
-        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        ranked    = sorted(scores.items(), key=lambda x: x[1], reverse=True)
         top_picks = ranked[:top_k]
 
         # 3. Record picks for settlement after hold_period
@@ -246,40 +262,50 @@ def run_backtest(years: int = 2, hold_period: int = 5, top_k: int = 5,
             except Exception:
                 continue
             pending_picks[settle_idx].append({
-                'symbol':     symbol,
+                'symbol':      symbol,
                 'date_bought': today,
                 'entry_price': entry_price,
-                'features':   features_cache[symbol],
-                'score':      score,
+                'features':    features_cache[symbol],
+                'score':       score,
             })
 
         equity_curve.append((today, portfolio_value))
         weight_history.append((today, dict(learner.weights)))
 
     # --- Summary ---
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("BACKTEST COMPLETE")
-    print("="*60)
-    print(f"  Period:          {dates[warmup].date()} → {dates[-1].date()}")
-    print(f"  Trading days:    {n_days - warmup}")
-    print(f"  Gradient updates:{update_count}")
-    print(f"  Final portfolio: ${portfolio_value:,.2f}  "
-          f"({'+'if portfolio_value > 10000 else ''}{(portfolio_value/10000-1)*100:.1f}%)")
+    print("=" * 60)
+    print(f"  Period:           {dates[warmup].date()} → {dates[-1].date()}")
+    print(f"  Trading days:     {n_days - warmup}")
+    print(f"  Gradient updates: {update_count}")
+    print(
+        f"  Final portfolio:  ${portfolio_value:,.2f}  "
+        f"({'+'if portfolio_value > 10000 else ''}"
+        f"{(portfolio_value/10000-1)*100:.1f}%)"
+    )
     print(f"\n  Final learned weights:")
     for feat, w in learner.weights.items():
-        arrow = '↑' if w > 0.25 else ('↓' if w < 0.15 else ' ')
+        arrow = '↑' if w > 0.25 else ('↓' if w < 0.10 else ' ')
         print(f"    {feat:12s}: {w:.4f}  {arrow}")
+    print(
+        f"\n  Note: 'sentiment' weight was trained on neutral (0.5) values.\n"
+        f"        It will become meaningful after live trading sessions."
+    )
 
     if trade_outcomes:
         returns = [t['actual_return'] for t in trade_outcomes]
-        wins = sum(1 for r in returns if r > 0)
-        print(f"\n  Resolved trades: {len(returns)}")
-        print(f"  Win rate:        {wins/len(returns)*100:.1f}%")
-        print(f"  Avg return/hold: {np.mean(returns)*100:.2f}%")
-        print(f"  Avg |error|:     {np.mean([abs(t['error']) for t in trade_outcomes]):.4f}")
+        wins    = sum(1 for r in returns if r > 0)
+        print(f"\n  Resolved trades:  {len(returns)}")
+        print(f"  Win rate:         {wins/len(returns)*100:.1f}%")
+        print(f"  Avg return/hold:  {np.mean(returns)*100:.2f}%")
+        print(
+            f"  Avg |error|:      "
+            f"{np.mean([abs(t['error']) for t in trade_outcomes]):.4f}"
+        )
 
     print(f"\n  Weights saved → {WEIGHTS_PATH}")
-    print("="*60)
+    print("=" * 60)
 
     # --- Save outcomes CSV ---
     outcomes_path = os.path.join(os.path.dirname(WEIGHTS_PATH), 'backtest_outcomes.csv')
@@ -300,9 +326,9 @@ def _plot_results(equity_curve, weight_history):
         dates_eq = [d for d, _ in equity_curve]
         values   = [v for _, v in equity_curve]
 
-        dates_wh = [d for d, _ in weight_history]
-        feats    = ['rsi', 'macd', 'momentum', 'volume']
-        wt_series = {f: [w[f] for _, w in weight_history] for f in feats}
+        dates_wh  = [d for d, _ in weight_history]
+        feats     = ['rsi', 'macd', 'momentum', 'volume', 'sentiment']
+        wt_series = {f: [w.get(f, 0.0) for _, w in weight_history] for f in feats}
 
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=False)
 
@@ -312,9 +338,10 @@ def _plot_results(equity_curve, weight_history):
         ax1.set_ylabel('Portfolio Value ($)')
         ax1.grid(alpha=0.3)
 
-        for feat in feats:
-            ax2.plot(dates_wh, wt_series[feat], linewidth=1.5, label=feat)
-        ax2.set_title('Learned Indicator Weights Over Time')
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+        for feat, color in zip(feats, colors):
+            ax2.plot(dates_wh, wt_series[feat], linewidth=1.5, label=feat, color=color)
+        ax2.set_title('Learned Indicator Weights Over Time (incl. sentiment)')
         ax2.set_ylabel('Weight')
         ax2.legend()
         ax2.grid(alpha=0.3)
@@ -332,7 +359,9 @@ def _plot_results(equity_curve, weight_history):
 # ---------------------------------------------------------------------------
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Train signal learner on historical data')
+    parser = argparse.ArgumentParser(
+        description='Train signal learner on historical data'
+    )
     parser.add_argument('--years',  type=int,   default=2,    help='Years of history (default: 2)')
     parser.add_argument('--hold',   type=int,   default=5,    help='Hold period in trading days (default: 5)')
     parser.add_argument('--topk',   type=int,   default=5,    help='Picks per day (default: 5)')
