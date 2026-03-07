@@ -190,10 +190,10 @@ def run(
     cfg = Config()
     cfg.validate()
 
-    broker    = AlpacaBroker()
-    portfolio = PortfolioManager()
-    risk      = RiskManager()
-    logger    = TradeLogger()
+    broker    = AlpacaBroker(cfg.APCA_API_KEY_ID, cfg.APCA_API_SECRET_KEY, cfg.APCA_API_BASE_URL)
+    portfolio = PortfolioManager(cfg)
+    risk      = RiskManager(cfg)
+    logger    = TradeLogger(cfg)
     learner   = LinearSignalLearner(learning_rate=LEARNING_RATE)
     engine    = SignalEngine(learner=learner)
 
