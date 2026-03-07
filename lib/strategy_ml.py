@@ -21,10 +21,11 @@ strategy.py, so this file is a drop-in replacement.
 
 import logging
 import numpy as np
-import yfinance as yf
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+
+from lib.yahoo_direct import download as yahoo_download
 
 from config import (
     LOOKBACK_DAYS, UNIVERSE_SIZE,
@@ -203,11 +204,9 @@ class SignalEngine:
         results = []
         sentiment_scores = sentiment_scores or {}
 
-        prices = yf.download(
+        prices = yahoo_download(
             universe,
             period=f'{LOOKBACK_DAYS}d',
-            auto_adjust=True,
-            progress=False,
         )
 
         for symbol in universe:
