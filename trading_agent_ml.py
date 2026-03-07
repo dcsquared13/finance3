@@ -344,7 +344,7 @@ def run(
         )
         shares = int(position_size / price)
         if shares < 1:
-     0      continue
+            continue
 
         cost = shares * price
         log.info(
