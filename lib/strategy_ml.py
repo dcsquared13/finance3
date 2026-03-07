@@ -27,10 +27,9 @@ from bs4 import BeautifulSoup
 
 from lib.yahoo_direct import download as yahoo_download
 
-from config import (
-    LOOKBACK_DAYS, UNIVERSE_SIZE,
-    MIN_SCORE_TO_BUY, SELL_SCORE_THRESHOLD,
-)
+from config import Config
+
+_cfg = Config()
 
 log = logging.getLogger(__name__)
 
@@ -72,10 +71,10 @@ class SignalEngine:
             table = soup.find('table', {'id': 'constituents'})
             tickers = [row.find('td').text.strip().replace('.', '-')
                        for row in table.find_all('tr')[1:]]
-            return tickers[:UNIVERSE_SIZE]
+            return tickers[:_cfg.UNIVERSE_SIZE]
         except Exception:
             log.warning("Could not fetch S&P 500 list, using fallback universe")
-            return FALLBACK_UNIVERSE[:UNIVERSE_SIZE]
+            return FALLBACK_UNIVERSE[:_cfg.UNIVERSE_SIZE]
 
     # ------------------------------------------------------------------
     # Indicators → feature dict (all normalised to [0, 1])
@@ -206,7 +205,7 @@ class SignalEngine:
 
         prices = yahoo_download(
             universe,
-            period=f'{LOOKBACK_DAYS}d',
+            period=f'{_cfg.LOOKBACK_DAYS}d',
         )
 
         for symbol in universe:
@@ -246,11 +245,11 @@ class SignalEngine:
         scored: list[tuple],
         current_holdings: list[str],
     ) -> list[tuple]:
-        """Return scored stocks that pass MIN_SCORE_TO_BUY and aren't held."""
+        """Return scored stocks that pass _cfg.MIN_SCORE_TO_BUY and aren't held."""
         return [
             (sym, score, feats, price)
             for sym, score, feats, price in scored
-            if score >= MIN_SCORE_TO_BUY and sym not in current_holdings
+            if score >= _cfg.MIN_SCORE_TO_BUY and sym not in current_holdings
         ]
 
     def should_sell(
@@ -260,10 +259,10 @@ class SignalEngine:
     ) -> tuple[bool, float | None]:
         """
         Return (True, score) if the symbol's signal has degraded below
-        SELL_SCORE_THRESHOLD.  Returns (False, score) if position should
+        _cfg.SELL_SCORE_THRESHOLD.  Returns (False, score) if position should
         be held.
         """
         for sym, score, _feats, _price in scored:
             if sym == symbol:
-                return (score <= SELL_SCORE_THRESHOLD, score)
+                return (score <= _cfg.SELL_SCORE_THRESHOLD, score)
         return (False, None)   # symbol not in universe — hold
