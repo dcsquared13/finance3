@@ -62,10 +62,7 @@ log = logging.getLogger(__name__)
 # Make sure the project root is on the path
 sys.path.insert(0, os.path.dirname(__file__))
 
-from config import (
-    MAX_POSITIONS, CASH_RESERVE_PCT, MIN_SCORE_TO_BUY,
-    STOP_LOSS_PCT, DAILY_LOSS_LIMIT_PCT,
-)
+from config import Config
 from lib.broker      import AlpacaBroker
 from lib.portfolio   import PortfolioManager
 from lib.risk        import RiskManager
@@ -189,6 +186,9 @@ def run(
         f"{datetime.now()}"
     )
     log.info("=" * 60)
+
+    cfg = Config()
+    cfg.validate()
 
     broker    = AlpacaBroker()
     portfolio = PortfolioManager()
@@ -326,8 +326,8 @@ def run(
     # -----------------------------------------------------------------------
     # Step 7: Buy new positions
     # -----------------------------------------------------------------------
-    slots_available = MAX_POSITIONS - len(portfolio.holdings)
-    usable_cash     = portfolio.cash * (1 - CASH_RESERVE_PCT)
+    slots_available = cfg.MAX_POSITIONS - len(portfolio.holdings)
+    usable_cash     = portfolio.cash * (1 - cfg.CASH_RESERVE_PCT)
     buy_candidates  = engine.rank_buys(scored, list(portfolio.holdings.keys()))
 
     today_buys = []   # collected for Step 9
@@ -339,8 +339,8 @@ def run(
         position_size = risk.position_size(
             total_value,
             len(portfolio.holdings) + 1,
-            MAX_POSITIONS,
-            CASH_RESERVE_PCT,
+            cfg.MAX_POSITIONS,
+            cfg.CASH_RESERVE_PCT,
         )
         shares = int(position_size / price)
         if shares < 1:
@@ -370,7 +370,7 @@ def run(
             'volume':    round(features.get('volume',    0.5), 4),
             'sentiment': round(features.get('sentiment', 0.5), 4),
             'sent_signal': sentiment_scores.get(symbol, {}).get('signal', 'N/A'),
-            'reason':    f"ML score {score:.3f} ≥ {MIN_SCORE_TO_BUY}",
+            'reason':    f"ML score {score:.3f} ≥ {cfg.MIN_SCORE_TO_BUY}",
             'weights':   json.dumps(
                 {k: round(v, 4) for k, v in learner.weights.items()}
             ),
