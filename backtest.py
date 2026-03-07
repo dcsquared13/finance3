@@ -3,7 +3,7 @@ backtest.py — Historical training loop for the ML signal learner
 
 HOW IT WORKS
 ============
-1. Fetch N years of daily OHLCV data for the stock universe via yfinance.
+1. Fetch N years of daily OHLCV data for the stock universe via Yahoo Finance v8 API.
 2. Walk forward day by day (no lookahead — on day T we only use data up to day T).
 3. On each day:
    a. Compute indicator features for every stock.
@@ -40,12 +40,12 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 import numpy as np
-import yfinance as yf
 import pandas as pd
 
 # Allow running from project root
 sys.path.insert(0, os.path.dirname(__file__))
 from lib.learner import LinearSignalLearner, WEIGHTS_PATH
+from lib.yahoo_direct import download as yahoo_download
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger(__name__)
@@ -172,12 +172,10 @@ def run_backtest(
         f"{start_date.date()} to {end_date.date()}..."
     )
 
-    raw = yf.download(
+    raw = yahoo_download(
         UNIVERSE,
         start=start_date.strftime('%Y-%m-%d'),
         end=end_date.strftime('%Y-%m-%d'),
-        auto_adjust=True,
-        progress=False,
     )
     log.info(f"Downloaded price data: {raw.shape}")
 
