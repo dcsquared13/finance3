@@ -261,7 +261,6 @@ def run(
     if triggered:
         log.warning(f"DAILY LOSS LIMIT: {reason}")
         logger.log({'action': 'HALT', 'reason': f"Daily loss {pct*100:.1f}%"})
-        logger.flush_session_summary(portfolio, current_value)
         return
 
     # -----------------------------------------------------------------------
