@@ -246,7 +246,7 @@ def run(
     # Step 4: Daily loss circuit breaker
     # -----------------------------------------------------------------------
     current_prices = broker.get_current_prices(list(portfolio.holdings.keys()))
-    current_value  = portfolio.current_value(current_prices)
+    current_value  = portfolio.cash + sum(h["shares"] * current_prices.get(sym, h["avg_price"]) for sym, h in portfolio.holdings.items())
     if risk.is_daily_loss_limit(portfolio.portfolio_value_at_open, current_value):
         pct = (
             (portfolio.portfolio_value_at_open - current_value)
@@ -394,7 +394,7 @@ def run(
     # Step 8: Session summary
     # -----------------------------------------------------------------------
     current_prices = broker.get_current_prices(list(portfolio.holdings.keys()))
-    current_value  = portfolio.current_value(current_prices)
+    current_value  = portfolio.cash + sum(h["shares"] * current_prices.get(sym, h["avg_price"]) for sym, h in portfolio.holdings.items())
     logger.flush_session_summary(portfolio, current_value)
     log.info(f"Session complete. Portfolio value=${current_value:,.2f}")
     log.info(f"Learner has {learner.update_count} lifetime updates.")
