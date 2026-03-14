@@ -399,7 +399,6 @@ def run(
     # -----------------------------------------------------------------------
     current_prices = broker.get_current_prices(list(portfolio.holdings.keys()))
     current_value  = portfolio.cash + sum(h["shares"] * current_prices.get(sym, h["avg_price"]) for sym, h in portfolio.holdings.items())
-    logger.flush_session_summary(portfolio, current_value)
     log.info(f"Session complete. Portfolio value=${current_value:,.2f}")
     log.info(f"Learner has {learner.update_count} lifetime updates.")
 
