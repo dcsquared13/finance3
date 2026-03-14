@@ -75,7 +75,7 @@ def compute_features(prices: pd.DataFrame, symbol: str, today_idx: int) -> dict 
     The learner will calibrate the sentiment weight once live data flows in.
     """
     try:
-        col = (symbol, 'Close') if isinstance(prices.columns, pd.MultiIndex) else symbol
+        col = ('Close', symbol) if isinstance(prices.columns, pd.MultiIndex) else symbol
         close = prices[col].dropna()
 
         if len(close) < 30:
@@ -118,7 +118,7 @@ def compute_features(prices: pd.DataFrame, symbol: str, today_idx: int) -> dict 
         # --- Volume breakout ---
         try:
             vcol = (
-                (symbol, 'Volume')
+                ('Volume', symbol)
                 if isinstance(prices.columns, pd.MultiIndex)
                 else symbol + '_Volume'
             )
