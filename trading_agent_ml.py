@@ -217,7 +217,7 @@ def run(
     # -----------------------------------------------------------------------
     portfolio.sync_with_alpaca(broker)
     account     = broker.get_account()
-    total_value = float(account.portfolio_value)
+    total_value = float(account["portfolio_value"])
     portfolio.portfolio_value_at_open = total_value
     log.info(
         f"Step 2: Portfolio synced. "
