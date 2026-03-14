@@ -214,6 +214,8 @@ def run_backtest(
                 try:
                     exit_price    = float(close_matrix[symbol].iloc[i])
                     actual_return = (exit_price - entry_price) / entry_price
+                    if not np.isfinite(actual_return):
+                        actual_return = 0.0
                 except Exception:
                     actual_return = 0.0
 
@@ -257,6 +259,8 @@ def run_backtest(
         for symbol, score in top_picks:
             try:
                 entry_price = float(close_matrix[symbol].iloc[i])
+                if not np.isfinite(entry_price) or entry_price <= 0:
+                    continue
             except Exception:
                 continue
             pending_picks[settle_idx].append({
