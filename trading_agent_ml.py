@@ -229,17 +229,27 @@ def run(
     # -----------------------------------------------------------------------
     current_prices = broker.get_current_prices(list(portfolio.holdings.keys()))
     for symbol, holding in list(portfolio.holdings.items()):
-        price    = current_prices.get(symbol)
-        pct_down = risk.pct_down_from_entry(holding['avg_price'], price)
-        if risk.is_stop_loss(pct_down):
-            log.info(f"STOP-LOSS: {symbol} down {pct_down*100:.1f}%")
+        price = current_prices.get(symbol)
+        if price is None:
+            continue
+        pl_pct = (price - holding['avg_price']) / holding['avg_price'] if holding['avg_price'] else 0.0
+        pos_dict = {
+            'symbol': symbol,
+            'qty': holding['shares'],
+            'avg_entry_price': holding['avg_price'],
+            'current_price': price,
+            'unrealized_pl_pct': pl_pct,
+        }
+        triggered, reason = risk.check_stop_loss(pos_dict)
+        if triggered:
+            log.info(f"STOP-LOSS: {symbol} down {pl_pct*100:.1f}%")
             if not dry_run:
                 order = broker.submit_market_order(symbol, holding['shares'], 'sell')
                 broker.wait_for_order_fill(order.id)
                 portfolio.record_sell(symbol, price, holding['shares'])
             logger.log({
                 'action': 'SELL_STOP_LOSS', 'symbol': symbol,
-                'reason': f"Down {pct_down*100:.1f}% from entry",
+                'reason': reason,
             })
 
     # -----------------------------------------------------------------------
@@ -247,12 +257,9 @@ def run(
     # -----------------------------------------------------------------------
     current_prices = broker.get_current_prices(list(portfolio.holdings.keys()))
     current_value  = portfolio.cash + sum(h["shares"] * current_prices.get(sym, h["avg_price"]) for sym, h in portfolio.holdings.items())
-    if risk.is_daily_loss_limit(portfolio.portfolio_value_at_open, current_value):
-        pct = (
-            (portfolio.portfolio_value_at_open - current_value)
-            / portfolio.portfolio_value_at_open
-        )
-        log.warning(f"DAILY LOSS LIMIT: down {pct*100:.1f}%. Halting new trades.")
+    triggered, reason = risk.check_daily_loss_limit(portfolio.portfolio_value_at_open, current_value)
+    if triggered:
+        log.warning(f"DAILY LOSS LIMIT: {reason}")
         logger.log({'action': 'HALT', 'reason': f"Daily loss {pct*100:.1f}%"})
         logger.flush_session_summary(portfolio, current_value)
         return
@@ -336,13 +343,11 @@ def run(
         if usable_cash < 1.0:
             break
 
-        position_size = risk.position_size(
-            total_value,
-            len(portfolio.holdings) + 1,
-            cfg.MAX_POSITIONS,
-            cfg.CASH_RESERVE_PCT,
+        shares = risk.calculate_position_size(
+            usable_cash,
+            price,
+            risk.slots_available(len(portfolio.holdings)),
         )
-        shares = int(position_size / price)
         if shares < 1:
             continue
 
