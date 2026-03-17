@@ -45,7 +45,7 @@ class Config:
     CASH_RESERVE_PCT: float = 0.05       # Keep 5% cash as buffer (not invested)
 
     # ── Signal thresholds ─────────────────────────────────────────────────
-    MIN_SCORE_TO_BUY: float = 0.60       # Composite score must exceed this to buy
+    MIN_SCORE_TO_BUY: float = 0.505       # Composite score must exceed this to buy
     SELL_SCORE_THRESHOLD: float = 0.40   # Exit position if score falls below this
 
     # ── Universe ──────────────────────────────────────────────────────────
