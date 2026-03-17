@@ -245,11 +245,26 @@ class SignalEngine:
         scored: list[tuple],
         current_holdings: list[str],
     ) -> list[tuple]:
-        """Return scored stocks that pass _cfg.MIN_SCORE_TO_BUY and aren't held."""
-        return [
+        """Return top-scoring stocks not already held, using an adaptive threshold.
+
+        Effective threshold = max(MIN_SCORE_TO_BUY, universe median) so buys
+        still happen even when all scores compress around 0.5 after training.
+        """
+        import numpy as np
+        candidates = [
             (sym, score, feats, price)
             for sym, score, feats, price in scored
-            if score >= _cfg.MIN_SCORE_TO_BUY and sym not in current_holdings
+            if sym not in current_holdings
+        ]
+        if not candidates:
+            return []
+        median_score = float(np.median([s for _, s, _, _ in candidates]))
+        threshold = max(_cfg.MIN_SCORE_TO_BUY, median_score)
+        log.debug(f"rank_buys: median={median_score:.4f}  threshold={threshold:.4f}")
+        return [
+            (sym, score, feats, price)
+            for sym, score, feats, price in candidates
+            if score >= threshold
         ]
 
     def should_sell(
