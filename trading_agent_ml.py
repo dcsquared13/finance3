@@ -144,17 +144,21 @@ def resolve_pending_picks(
                 f"pred={result['predicted']:.3f} err={result['error']:.3f}"
             )
 
-            trade_logger.log({
-                'action':            'LEARN_UPDATE',
-                'symbol':            symbol,
-                'actual_return_pct': round(actual_return * 100, 2),
-                'predicted_score':   round(result['predicted'], 4),
-                'learn_error':       round(result['error'], 4),
-                'new_weights':       json.dumps(
-                    {k: round(v, 4) for k, v in result['weights'].items()}
-                ),
-                'reason': f"Resolved pick from {pick.get('date_bought')}",
-            })
+            trade_logger.log_trade(
+                ticker=symbol,
+                action='LEARN_UPDATE',
+                shares=0,
+                price=0.0,
+                reason=f"Resolved pick from {pick.get('date_bought')}",
+                scores={
+                    'actual_return_pct': round(actual_return * 100, 2),
+                    'predicted_score':   round(result['predicted'], 4),
+                    'learn_error':       round(result['error'], 4),
+                    'new_weights':       json.dumps(
+                        {k: round(v, 4) for k, v in result['weights'].items()}
+                    ),
+                },
+            )
 
         except Exception as exc:
             log.warning(f"Could not resolve pick for {symbol}: {exc}")
@@ -245,12 +249,16 @@ def run(
             log.info(f"STOP-LOSS: {symbol} down {pl_pct*100:.1f}%")
             if not dry_run:
                 order = broker.submit_market_order(symbol, holding['shares'], 'sell')
-                broker.wait_for_order_fill(order.id)
+                if order:
+                    broker.wait_for_order_fill(order["id"])
                 portfolio.record_sell(symbol, price, holding['shares'])
-            logger.log({
-                'action': 'SELL_STOP_LOSS', 'symbol': symbol,
-                'reason': reason,
-            })
+            logger.log_trade(
+                ticker=symbol,
+                action='SELL_STOP_LOSS',
+                shares=holding['shares'],
+                price=price,
+                reason=reason,
+            )
 
     # -----------------------------------------------------------------------
     # Step 4: Daily loss circuit breaker
@@ -260,7 +268,7 @@ def run(
     triggered, reason = risk.check_daily_loss_limit(portfolio.portfolio_value_at_open, current_value)
     if triggered:
         log.warning(f"DAILY LOSS LIMIT: {reason}")
-        logger.log({'action': 'HALT', 'reason': f"Daily loss {pct*100:.1f}%"})
+        logger.log_halt(reason=reason, portfolio_value=current_value, cash=portfolio.cash)
         return
 
     # -----------------------------------------------------------------------
@@ -321,13 +329,17 @@ def run(
             log.info(f"SELL signal: {symbol} score={score:.3f}")
             if not dry_run:
                 order = broker.submit_market_order(symbol, holding['shares'], 'sell')
-                broker.wait_for_order_fill(order.id)
+                if order:
+                    broker.wait_for_order_fill(order["id"])
                 portfolio.record_sell(symbol, price, holding['shares'])
-            logger.log({
-                'action': 'SELL_SIGNAL', 'symbol': symbol,
-                'score':  round(score, 4),
-                'reason': 'Signal degraded below threshold',
-            })
+            logger.log_trade(
+                ticker=symbol,
+                action='SELL_SIGNAL',
+                shares=holding['shares'],
+                price=price,
+                reason='Signal degraded below threshold',
+                scores={'score': round(score, 4)},
+            )
 
     # -----------------------------------------------------------------------
     # Step 7: Buy new positions
@@ -359,26 +371,29 @@ def run(
 
         if not dry_run:
             order = broker.submit_market_order(symbol, shares, 'buy')
-            broker.wait_for_order_fill(order.id)
+            if order:
+                broker.wait_for_order_fill(order["id"])
             portfolio.record_buy(symbol, price, shares)
 
-        logger.log({
-            'action':    'BUY',
-            'symbol':    symbol,
-            'shares':    shares,
-            'price':     price,
-            'score':     round(score, 4),
-            'rsi':       round(features.get('rsi',       0.5), 4),
-            'macd':      round(features.get('macd',      0.5), 4),
-            'momentum':  round(features.get('momentum',  0.5), 4),
-            'volume':    round(features.get('volume',    0.5), 4),
-            'sentiment': round(features.get('sentiment', 0.5), 4),
-            'sent_signal': sentiment_scores.get(symbol, {}).get('signal', 'N/A'),
-            'reason':    f"ML score {score:.3f} ≥ {cfg.MIN_SCORE_TO_BUY}",
-            'weights':   json.dumps(
-                {k: round(v, 4) for k, v in learner.weights.items()}
-            ),
-        })
+        logger.log_trade(
+            ticker=symbol,
+            action='BUY',
+            shares=shares,
+            price=price,
+            reason=f"ML score {score:.3f} ≥ {cfg.MIN_SCORE_TO_BUY}",
+            scores={
+                'score':       round(score, 4),
+                'rsi':         round(features.get('rsi',       0.5), 4),
+                'macd':        round(features.get('macd',      0.5), 4),
+                'momentum':    round(features.get('momentum',  0.5), 4),
+                'volume':      round(features.get('volume',    0.5), 4),
+                'sentiment':   round(features.get('sentiment', 0.5), 4),
+                'sent_signal': sentiment_scores.get(symbol, {}).get('signal', 'N/A'),
+                'weights':     json.dumps(
+                    {k: round(v, 4) for k, v in learner.weights.items()}
+                ),
+            },
+        )
 
         usable_cash -= cost
 

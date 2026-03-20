@@ -67,7 +67,7 @@ def _build_finbert():
     _pipe = pipeline(
         'text-classification',
         model='ProsusAI/finbert',
-        return_all_scores=True,
+        top_k=None,
         device=-1,       # CPU; change to 0 to use first GPU
     )
 

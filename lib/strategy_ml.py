@@ -273,11 +273,37 @@ class SignalEngine:
         scored: list[tuple],
     ) -> tuple[bool, float | None]:
         """
-        Return (True, score) if the symbol's signal has degraded below
-        _cfg.SELL_SCORE_THRESHOLD.  Returns (False, score) if position should
-        be held.
+        Return (True, score) if the symbol's signal has degraded enough to sell.
+
+        Uses an adaptive threshold that mirrors rank_buys():
+          sell_threshold = max(SELL_SCORE_THRESHOLD, median_score - gap)
+        where gap = MIN_SCORE_TO_BUY - SELL_SCORE_THRESHOLD.
+
+        This prevents score compression from silencing sell signals — if all
+        scores cluster around 0.5, the adaptive threshold rises with the median
+        so underperformers are still exited.
+
+        If the symbol is missing from scored (data failure), default to sell
+        so we don't hold positions we can't evaluate.
         """
-        for sym, score, _feats, _price in scored:
-            if sym == symbol:
-                return (score <= _cfg.SELL_SCORE_THRESHOLD, score)
-        return (False, None)   # symbol not in universe — hold
+        entry = next(
+            ((score) for sym, score, _, _ in scored if sym == symbol),
+            None,
+        )
+        if entry is None:
+            log.warning(
+                f"should_sell: {symbol} not in scored universe — defaulting to sell"
+            )
+            return (True, None)
+
+        score = entry
+        all_scores = [s for _, s, _, _ in scored]
+        median_score = float(np.median(all_scores))
+        gap = _cfg.MIN_SCORE_TO_BUY - _cfg.SELL_SCORE_THRESHOLD  # e.g. 0.105
+        adaptive_threshold = max(_cfg.SELL_SCORE_THRESHOLD, median_score - gap)
+
+        log.debug(
+            f"should_sell {symbol}: score={score:.4f}  "
+            f"median={median_score:.4f}  adaptive_threshold={adaptive_threshold:.4f}"
+        )
+        return (score <= adaptive_threshold, score)
