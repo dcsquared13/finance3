@@ -28,6 +28,8 @@ import pandas as pd
 import yfinance as yf
 import requests
 
+from lib.congress import congressional_signal
+
 logger = logging.getLogger(__name__)
 
 # Static S&P 500 subset — high-liquidity, well-known names used as default universe.
@@ -266,6 +268,27 @@ class SignalEngine:
         for sym, df in ohlcv_data.items():
             raw_momentums[sym] = self._momentum(df["Close"])
 
+        # Optional: fetch congressional signal for entire universe up front
+        congress_data: dict[str, dict] = {}
+        congress_enabled = (
+            getattr(self.cfg, "CONGRESS_SIGNAL_ENABLED", False)
+            and getattr(self.cfg, "CONGRESS_WEIGHT", 0.0) > 0.0
+        )
+        if congress_enabled:
+            try:
+                lookback = getattr(self.cfg, "CONGRESS_LOOKBACK_DAYS", 90)
+                congress_data = congressional_signal(list(ohlcv_data.keys()), lookback_days=lookback)
+                logger.info(
+                    "Congressional signal loaded for %d tickers "
+                    "(weight=%.0f%%)",
+                    len(congress_data),
+                    self.cfg.CONGRESS_WEIGHT * 100,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Congressional signal fetch failed (%s) — skipping for this session.", exc
+                )
+
         # Second pass: compute all indicator scores
         scores: dict[str, dict] = {}
         for sym, df in ohlcv_data.items():
@@ -280,12 +303,33 @@ class SignalEngine:
                 mom_s  = self._momentum_score(raw_momentums, sym)
                 vol_s  = self._volume_score(vol_ratio, price_chg)
 
-                composite = (
+                tech_composite = (
                     self.cfg.RSI_WEIGHT      * rsi_s
                     + self.cfg.MACD_WEIGHT   * macd_s
                     + self.cfg.MOMENTUM_WEIGHT * mom_s
                     + self.cfg.VOLUME_WEIGHT * vol_s
                 )
+                tech_composite = float(np.clip(tech_composite, 0.0, 1.0))
+
+                # ── Congressional signal blend ────────────────────────────
+                cong_result = congress_data.get(sym)
+                cong_score  = cong_result["score"] if cong_result else 0.5
+                cong_dir    = cong_result["net_direction"] if cong_result else "neutral"
+                cong_buys   = cong_result["n_buys"]  if cong_result else 0
+                cong_sells  = cong_result["n_sells"] if cong_result else 0
+
+                if congress_enabled and cong_result is not None:
+                    cw = self.cfg.CONGRESS_WEIGHT
+                    composite = tech_composite * (1.0 - cw) + cong_score * cw
+                    cong_note = (
+                        f" | Congress={cong_dir}"
+                        f"(score={cong_score:.2f},B{cong_buys}/S{cong_sells})"
+                    )
+                else:
+                    composite = tech_composite
+                    cong_note = ""
+                # ─────────────────────────────────────────────────────────
+
                 composite = round(float(np.clip(composite, 0.0, 1.0)), 4)
 
                 if composite >= self.cfg.MIN_SCORE_TO_BUY:
@@ -301,6 +345,7 @@ class SignalEngine:
                     f"MACD={macd_dir}(score={macd_s:.2f}) | "
                     f"Momentum={mom_pct:+.1%}(score={mom_s:.2f}) | "
                     f"VolRatio={vol_ratio:.2f}(score={vol_s:.2f})"
+                    f"{cong_note}"
                 )
 
                 scores[sym] = {
@@ -317,6 +362,11 @@ class SignalEngine:
                     "macd_score": round(macd_s, 3),
                     "momentum_score": round(mom_s, 3),
                     "volume_score": round(vol_s, 3),
+                    # Congressional sub-scores
+                    "congress_score":    round(cong_score, 3),
+                    "congress_direction": cong_dir,
+                    "congress_buys":     cong_buys,
+                    "congress_sells":    cong_sells,
                 }
 
             except Exception as exc:

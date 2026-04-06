@@ -66,10 +66,19 @@ class Config:
     MOMENTUM_WEIGHT: float = 0.25
     VOLUME_WEIGHT: float = 0.20
 
+    # ── Congressional trading signal ──────────────────────────────────────
+    # When enabled, recent STOCK Act disclosures from House + Senate are
+    # fetched and blended into the composite score as an extra signal.
+    # Set CONGRESS_WEIGHT=0.0 or CONGRESS_SIGNAL_ENABLED=False to disable.
+    CONGRESS_SIGNAL_ENABLED: bool = True
+    CONGRESS_WEIGHT: float = 0.10          # Blend weight (0 = off, max ~0.20 recommended)
+    CONGRESS_LOOKBACK_DAYS: int = 90       # How far back to look at disclosures
+
     # ── Paths ─────────────────────────────────────────────────────────────
     DATA_DIR: str = "data"
     PORTFOLIO_FILE: str = "data/portfolio.json"
     TRADE_LOG_FILE: str = "data/trade_log.csv"
+    CONGRESS_CACHE_FILE: str = "data/congress_cache.json"
 
     def validate(self) -> None:
         """Raise ValueError if required settings are missing or invalid."""
