@@ -9,9 +9,22 @@ __pycache__/
 venv/
 env/
 
-# Data files (portfolio state and trade log — keep locally, not in git)
-data/portfolio.json
-data/trade_log.csv
+# Virtual environment artifacts (bin/ already covers executables)
+bin/
+lib/python*/
+share/
+pyvenv.cfg
+
+# Runtime data (portfolio state, logs, caches — keep locally, not in git)
+data/
+logs/
+
+# Generated outputs (charts, backtest plots)
+*.png
+*.jpg
+
+# Claude Code session / worktree data
+.claude/
 
 # OS
 .DS_Store
