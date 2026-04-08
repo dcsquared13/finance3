@@ -26,6 +26,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from lib.yahoo_direct import download as yahoo_download
+from lib.congress import congressional_signal
 
 from config import Config
 
@@ -183,10 +184,11 @@ class SignalEngine:
         self,
         universe: list[str],
         sentiment_scores: dict | None = None,
+        congress_scores: dict | None = None,
     ) -> list[tuple]:
         """
-        Fetch price data for each symbol, attach sentiment if available,
-        and return scored results.
+        Fetch price data for each symbol, attach sentiment and congressional
+        signal if available, and return scored results.
 
         Parameters
         ----------
@@ -196,15 +198,27 @@ class SignalEngine:
                            Keys are ticker symbols; values contain at least
                            {'composite': float}.  If None or a ticker is
                            missing, sentiment defaults to 0.5.
+        congress_scores  : optional dict returned by
+                           lib/congress.congressional_signal().
+                           Keys are ticker symbols; values contain at least
+                           {'score': float}.  Applied as a post-composite
+                           blend weighted by cfg.CONGRESS_WEIGHT.
 
         Returns
         -------
         List of (symbol, score, features_dict, current_price) sorted by
         score descending.  features_dict always contains all five keys:
-        rsi, macd, momentum, volume, sentiment.
+        rsi, macd, momentum, volume, sentiment — plus congress_score,
+        congress_direction when the congressional signal is active.
         """
         results = []
         sentiment_scores = sentiment_scores or {}
+        congress_scores  = congress_scores  or {}
+
+        congress_enabled = (
+            getattr(_cfg, 'CONGRESS_SIGNAL_ENABLED', False)
+            and getattr(_cfg, 'CONGRESS_WEIGHT', 0.0) > 0.0
+        )
 
         prices = yahoo_download(
             universe,
@@ -231,9 +245,23 @@ class SignalEngine:
                 if features is None:
                     continue
 
-                score         = self._composite_score(features)
-                current_price = float(hist['Close'].iloc[-1])
+                score = self._composite_score(features)
 
+                # ── Congressional signal blend ────────────────────────────
+                cong_result = congress_scores.get(symbol)
+                cong_score  = cong_result['score'] if cong_result else 0.5
+                cong_dir    = cong_result['net_direction'] if cong_result else 'neutral'
+
+                if congress_enabled and cong_result is not None:
+                    cw    = _cfg.CONGRESS_WEIGHT
+                    score = score * (1.0 - cw) + cong_score * cw
+                    score = float(np.clip(score, 0.0, 1.0))
+
+                features['congress_score']     = round(cong_score, 4)
+                features['congress_direction'] = cong_dir
+                # ─────────────────────────────────────────────────────────
+
+                current_price = float(hist['Close'].iloc[-1])
                 results.append((symbol, score, features, current_price))
 
             except Exception as exc:

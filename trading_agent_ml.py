@@ -309,12 +309,46 @@ def run(
             sentiment_scores = {}
 
     # -----------------------------------------------------------------------
-    # Step 5b: Score the universe with ML weights + sentiment
+    # Step 5b: Fetch congressional trading signal for the universe
     # -----------------------------------------------------------------------
-    log.info(f"Step 5b: Scoring {len(universe)} stocks with learned weights...")
-    scored = engine.score_universe(universe, sentiment_scores=sentiment_scores)
+    congress_scores: dict = {}
+
+    if cfg.CONGRESS_SIGNAL_ENABLED and cfg.CONGRESS_WEIGHT > 0.0:
+        log.info(
+            f"Step 5b: Fetching congressional signal for {len(universe)} tickers "
+            f"(lookback={cfg.CONGRESS_LOOKBACK_DAYS}d, weight={cfg.CONGRESS_WEIGHT:.0%})..."
+        )
+        try:
+            from lib.congress import congressional_signal
+            congress_scores = congressional_signal(
+                universe,
+                lookback_days=cfg.CONGRESS_LOOKBACK_DAYS,
+            )
+            bullish = sum(1 for v in congress_scores.values() if v.get('net_direction') == 'bullish')
+            bearish = sum(1 for v in congress_scores.values() if v.get('net_direction') == 'bearish')
+            active  = sum(1 for v in congress_scores.values() if v.get('total_activity', 0) > 0)
+            log.info(
+                f"Step 5b: Congressional signal done. "
+                f"{active} tickers with activity — bullish={bullish}, bearish={bearish}."
+            )
+        except Exception as exc:
+            log.warning(
+                f"Step 5b: Congressional signal failed ({exc}). "
+                f"Proceeding with neutral congress score (0.5) for all tickers."
+            )
+            congress_scores = {}
+
+    # -----------------------------------------------------------------------
+    # Step 5c: Score the universe with ML weights + sentiment + congress
+    # -----------------------------------------------------------------------
+    log.info(f"Step 5c: Scoring {len(universe)} stocks with learned weights...")
+    scored = engine.score_universe(
+        universe,
+        sentiment_scores=sentiment_scores,
+        congress_scores=congress_scores,
+    )
     log.info(
-        f"Step 5b: Top picks: "
+        f"Step 5c: Top picks: "
         f"{[(s, round(sc, 3)) for s, sc, _, _ in scored[:5]]}"
     )
 
@@ -382,13 +416,15 @@ def run(
             price=price,
             reason=f"ML score {score:.3f} ≥ {cfg.MIN_SCORE_TO_BUY}",
             scores={
-                'score':       round(score, 4),
-                'rsi':         round(features.get('rsi',       0.5), 4),
-                'macd':        round(features.get('macd',      0.5), 4),
-                'momentum':    round(features.get('momentum',  0.5), 4),
-                'volume':      round(features.get('volume',    0.5), 4),
-                'sentiment':   round(features.get('sentiment', 0.5), 4),
-                'sent_signal': sentiment_scores.get(symbol, {}).get('signal', 'N/A'),
+                'score':          round(score, 4),
+                'rsi':            round(features.get('rsi',               0.5), 4),
+                'macd':           round(features.get('macd',              0.5), 4),
+                'momentum':       round(features.get('momentum',          0.5), 4),
+                'volume':         round(features.get('volume',            0.5), 4),
+                'sentiment':      round(features.get('sentiment',         0.5), 4),
+                'sent_signal':    sentiment_scores.get(symbol, {}).get('signal', 'N/A'),
+                'congress_score': round(features.get('congress_score',    0.5), 4),
+                'congress_dir':   features.get('congress_direction', 'neutral'),
                 'weights':     json.dumps(
                     {k: round(v, 4) for k, v in learner.weights.items()}
                 ),
