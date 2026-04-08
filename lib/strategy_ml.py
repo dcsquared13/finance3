@@ -35,7 +35,7 @@ log = logging.getLogger(__name__)
 
 # Static fallback universe (same as strategy.py)
 FALLBACK_UNIVERSE = [
-    'AAPL','MSFT','NVDA','AMZN','GOOGL','META','BRK-B','TSLA','JPM','V',
+    'AAPL','MSFT','NVDA','AMZN','GOOGL','META','TSLA','JPM','V','C',
     'UNH','XOM','LLY','JNJ','WMT','MA','PG','HD','MRK','COST',
     'ABBV','CVX','BAC','NFLX','AMD','KO','PEP','TMO','ADBE','CRM',
     'ACN','MCD','LIN','ABT','CSCO','DHR','TXN','ORCL','WFC','NKE',
@@ -63,7 +63,9 @@ class SignalEngine:
     # ------------------------------------------------------------------
 
     def get_universe(self) -> list[str]:
-        """Return top N S&P 500 tickers.  Falls back to static list."""
+        """Return top N S&P 500 tickers, excluding Alpaca-unsupported assets.
+        Falls back to static list on network error."""
+        excluded = getattr(_cfg, 'EXCLUDED_TICKERS', frozenset())
         try:
             url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
             resp = requests.get(url, timeout=10)
@@ -71,10 +73,11 @@ class SignalEngine:
             table = soup.find('table', {'id': 'constituents'})
             tickers = [row.find('td').text.strip().replace('.', '-')
                        for row in table.find_all('tr')[1:]]
-            return tickers[:_cfg.UNIVERSE_SIZE]
+            filtered = [t for t in tickers if t not in excluded]
+            return filtered[:_cfg.UNIVERSE_SIZE]
         except Exception:
             log.warning("Could not fetch S&P 500 list, using fallback universe")
-            return FALLBACK_UNIVERSE[:_cfg.UNIVERSE_SIZE]
+            return [t for t in FALLBACK_UNIVERSE if t not in excluded][:_cfg.UNIVERSE_SIZE]
 
     # ------------------------------------------------------------------
     # Indicators → feature dict (all normalised to [0, 1])
