@@ -66,6 +66,12 @@ class Config:
     MOMENTUM_WEIGHT: float = 0.25
     VOLUME_WEIGHT: float = 0.20
 
+    # ── Ticker exclusions ─────────────────────────────────────────────────
+    # Tickers to skip entirely — never scored, never traded.
+    # BRK-B and BF-B are excluded by default because Alpaca paper trading
+    # does not list them as tradeable assets (neither hyphen nor slash format).
+    EXCLUDED_TICKERS: frozenset = frozenset({"BRK-B", "BRK-A", "BF-B", "BF-A"})
+
     # ── Congressional trading signal ──────────────────────────────────────
     # When enabled, recent STOCK Act disclosures from House + Senate are
     # fetched and blended into the composite score as an extra signal.

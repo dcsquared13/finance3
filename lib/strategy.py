@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # Static S&P 500 subset — high-liquidity, well-known names used as default universe.
 # Agent will scan and score all of these, then trade the top signals.
 STATIC_SP500_SUBSET = [
-    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "BRK-B", "LLY", "AVGO",
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "LLY", "AVGO", "UNH",
     "TSLA", "JPM", "V", "UNH", "XOM", "MA", "PG", "COST", "HD", "MRK", "ABBV",
     "CVX", "KO", "BAC", "PEP", "ADBE", "WMT", "CRM", "MCD", "TMO", "ACN",
     "NFLX", "AMD", "TXN", "ABT", "WFC", "QCOM", "PM", "INTU", "CAT", "DHR",
@@ -58,15 +58,27 @@ class SignalEngine:
         """
         Return the list of ticker symbols to scan.
         Tries to fetch live S&P 500 from Wikipedia; falls back to static list.
+        Tickers in cfg.EXCLUDED_TICKERS are always removed (e.g. BRK-B, BF-B
+        which Alpaca paper trading does not support as tradeable assets).
         """
+        excluded = getattr(self.cfg, "EXCLUDED_TICKERS", frozenset())
+
         try:
             tickers = self._fetch_sp500_tickers()
             if tickers:
-                return tickers[: self.cfg.UNIVERSE_SIZE]
+                filtered = [t for t in tickers if t not in excluded]
+                if excluded & set(tickers):
+                    logger.info(
+                        "Excluded %d unsupported tickers from universe: %s",
+                        len(excluded & set(tickers)),
+                        sorted(excluded & set(tickers)),
+                    )
+                return filtered[: self.cfg.UNIVERSE_SIZE]
         except Exception as exc:
             logger.warning("Live S&P 500 fetch failed (%s), using static list.", exc)
 
-        return STATIC_SP500_SUBSET[: self.cfg.UNIVERSE_SIZE]
+        filtered_static = [t for t in STATIC_SP500_SUBSET if t not in excluded]
+        return filtered_static[: self.cfg.UNIVERSE_SIZE]
 
     def _fetch_sp500_tickers(self) -> list[str]:
         """Scrape S&P 500 constituent tickers from Wikipedia."""
