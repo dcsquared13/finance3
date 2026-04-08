@@ -61,12 +61,21 @@ import requests
 log = logging.getLogger(__name__)
 
 # ── Public API endpoints ──────────────────────────────────────────────────────
+# Note: these are community-maintained endpoints and can go down without notice.
+# All fetch failures are handled gracefully — the agent continues with whatever
+# data was retrieved (or neutral 0.5 scores if nothing could be fetched).
 
 HOUSE_TRADES_URL = "https://housestockwatcher.com/api/issuances/json"
+
+# The original S3 bucket (senate-stock-watcher-data.s3-us-west-2.amazonaws.com)
+# was made private. The underlying data lives in a public GitHub repo;
+# the raw content URL below is the current reliable source.
 SENATE_TRADES_URL = (
-    "https://senate-stock-watcher-data.s3-us-west-2.amazonaws.com"
-    "/aggregate/all_transactions.json"
+    "https://raw.githubusercontent.com/timothycarambat"
+    "/senate-stock-watcher-data/main/data/all_transactions.json"
 )
+# Fallback if the GitHub raw URL also changes
+SENATE_TRADES_URL_FALLBACK = "https://senatestockwatcher.com/api/trades.json"
 
 CACHE_FILE = "data/congress_cache.json"
 CACHE_TTL_HOURS = 24
@@ -224,16 +233,27 @@ def _fetch_house_trades() -> list[dict]:
 
 def _fetch_senate_trades() -> list[dict]:
     """
-    Fetch Senate STOCK Act disclosures from the Senate Stock Watcher S3 bucket.
-    Returns a list of normalised trade dicts.
+    Fetch Senate STOCK Act disclosures from the GitHub raw data repo,
+    with a fallback to senatestockwatcher.com. Returns a list of
+    normalised trade dicts, or an empty list if both sources fail.
     """
     log.info("Fetching Senate congressional trades…")
-    try:
-        resp = requests.get(SENATE_TRADES_URL, timeout=REQUEST_TIMEOUT)
-        resp.raise_for_status()
-        raw = resp.json()
-    except Exception as exc:
-        log.warning("Senate trades fetch failed: %s", exc)
+    raw = None
+    for url in (SENATE_TRADES_URL, SENATE_TRADES_URL_FALLBACK):
+        try:
+            resp = requests.get(url, timeout=REQUEST_TIMEOUT)
+            resp.raise_for_status()
+            raw = resp.json()
+            log.info("Senate trades fetched from %s", url)
+            break
+        except Exception as exc:
+            log.info("Senate trades unavailable at %s (%s) — trying fallback.", url, exc)
+
+    if raw is None:
+        log.info(
+            "Senate trades could not be fetched from any source — "
+            "proceeding with House data only."
+        )
         return []
 
     trades = []
