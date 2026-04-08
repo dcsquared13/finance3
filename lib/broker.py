@@ -24,6 +24,33 @@ from alpaca_trade_api.rest import APIError
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Symbol normalisation
+# ---------------------------------------------------------------------------
+# Alpaca uses '/' for tickers that yfinance/Wikipedia represent with '-'.
+# e.g. yfinance: "BRK-B"  →  Alpaca: "BRK/B"
+# All broker methods call _to_alpaca() before hitting the API, and
+# _from_alpaca() when returning symbols to the rest of the codebase, so
+# the translation is invisible to callers.
+
+_TO_ALPACA: dict[str, str] = {
+    "BRK-A": "BRK/A",
+    "BRK-B": "BRK/B",
+    "BF-A":  "BF/A",
+    "BF-B":  "BF/B",
+}
+_FROM_ALPACA: dict[str, str] = {v: k for k, v in _TO_ALPACA.items()}
+
+
+def _to_alpaca(symbol: str) -> str:
+    """Convert internal hyphen-format symbol to Alpaca's slash format."""
+    return _TO_ALPACA.get(symbol, symbol)
+
+
+def _from_alpaca(symbol: str) -> str:
+    """Convert Alpaca's slash-format symbol back to internal hyphen format."""
+    return _FROM_ALPACA.get(symbol, symbol)
+
 
 class AlpacaBroker:
     """Thin wrapper around the Alpaca REST API (paper trading)."""
@@ -102,7 +129,7 @@ class AlpacaBroker:
         for p in positions:
             result.append(
                 {
-                    "symbol": p.symbol,
+                    "symbol": _from_alpaca(p.symbol),
                     "qty": int(p.qty),
                     "avg_entry_price": float(p.avg_entry_price),
                     "current_price": float(p.current_price),
@@ -116,9 +143,9 @@ class AlpacaBroker:
     def get_position(self, symbol: str) -> Optional[dict]:
         """Return a single position dict, or None if not held."""
         try:
-            p = self.api.get_position(symbol)
+            p = self.api.get_position(_to_alpaca(symbol))
             return {
-                "symbol": p.symbol,
+                "symbol": _from_alpaca(p.symbol),
                 "qty": int(p.qty),
                 "avg_entry_price": float(p.avg_entry_price),
                 "current_price": float(p.current_price),
@@ -137,7 +164,7 @@ class AlpacaBroker:
         Returns None on failure.
         """
         try:
-            trade = self.api.get_latest_trade(symbol)
+            trade = self.api.get_latest_trade(_to_alpaca(symbol))
             return float(trade.price)
         except APIError as exc:
             logger.warning("Could not fetch price for %s: %s", symbol, exc)
@@ -152,10 +179,11 @@ class AlpacaBroker:
         # Batch in groups of 50 to avoid URL length issues
         for i in range(0, len(symbols), 50):
             batch = symbols[i : i + 50]
+            alpaca_batch = [_to_alpaca(s) for s in batch]
             try:
-                trades = self.api.get_latest_trades(batch)
-                for sym, trade in trades.items():
-                    prices[sym] = float(trade.price)
+                trades = self.api.get_latest_trades(alpaca_batch)
+                for alpaca_sym, trade in trades.items():
+                    prices[_from_alpaca(alpaca_sym)] = float(trade.price)
             except APIError as exc:
                 logger.warning("Batch price fetch failed: %s", exc)
                 # Fall back to individual fetches for this batch
@@ -188,7 +216,7 @@ class AlpacaBroker:
 
         try:
             order = self.api.submit_order(
-                symbol=symbol,
+                symbol=_to_alpaca(symbol),
                 qty=qty,
                 side=side,
                 type="market",
